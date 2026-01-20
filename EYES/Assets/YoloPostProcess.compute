@@ -1,0 +1,58 @@
+#pragma kernel CSMain
+
+#pragma kernel CSMain
+
+// 接收 AI 輸出
+StructuredBuffer<float> outputTensor;
+
+// 輸出給 C# 的結果
+RWStructuredBuffer<float4> boxes; // [x, y, w, h]
+RWStructuredBuffer<int> classes;
+RWStructuredBuffer<float> scores;
+RWStructuredBuffer<uint> counter;
+
+float confidenceThreshold;
+int numDetections; // 8400
+int numClasses; // 80
+
+[numthreads(256, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x;
+    if (i >= numDetections)
+        return;
+
+    // 計算資料位置 (YOLOv8 格式)
+    int step = 4 + numClasses;
+    int baseIdx = i * step;
+
+    // 1. 找出最大分數的類別
+    float maxScore = 0.0;
+    int bestClass = -1;
+    for (int c = 0; c < numClasses; c++)
+    {
+        float score = outputTensor[baseIdx + 4 + c];
+        if (score > maxScore)
+        {
+            maxScore = score;
+            bestClass = c;
+        }
+    }
+
+    // 2. 過濾與寫入
+    if (maxScore >= confidenceThreshold)
+    {
+        uint index;
+        InterlockedAdd(counter[0], 1, index);
+
+        float x = outputTensor[baseIdx + 0];
+        float y = outputTensor[baseIdx + 1];
+        float w = outputTensor[baseIdx + 2];
+        float h = outputTensor[baseIdx + 3];
+
+        // 轉換中心點到左上角
+        boxes[index] = float4(x - w * 0.5, y - h * 0.5, w, h);
+        classes[index] = bestClass;
+        scores[index] = maxScore;
+    }
+}
