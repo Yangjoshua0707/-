@@ -1,0 +1,53 @@
+#pragma kernel CSMain
+
+StructuredBuffer<float> outputTensor;
+
+RWStructuredBuffer<float4> boxes;
+RWStructuredBuffer<int> classes;
+RWStructuredBuffer<float> scores;
+RWStructuredBuffer<uint> counter;
+
+float confidenceThreshold;
+int numDetections; // 8400
+int numClasses; // 80
+
+[numthreads(256, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= numDetections)
+        return;
+
+    // YOLOv8 layout: [1, 84, 8400] ¡÷ channel-major
+    float cx = outputTensor[0 * numDetections + i];
+    float cy = outputTensor[1 * numDetections + i];
+    float w = outputTensor[2 * numDetections + i];
+    float h = outputTensor[3 * numDetections + i];
+
+    float bestScore = 0.0;
+    int bestClass = -1;
+
+    for (int c = 0; c < numClasses; c++)
+    {
+        float score = outputTensor[(4 + c) * numDetections + i];
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestClass = c;
+        }
+    }
+
+    if (bestScore >= confidenceThreshold)
+    {
+        uint index;
+        InterlockedAdd(counter[0], 1, index);
+
+        // cx,cy,w,h ¡÷ x,y,w,h (top-left)
+        float x = cx - w * 0.5;
+        float y = cy - h * 0.5;
+
+        boxes[index] = float4(x, y, w, h);
+        classes[index] = bestClass;
+        scores[index] = bestScore;
+    }
+}
